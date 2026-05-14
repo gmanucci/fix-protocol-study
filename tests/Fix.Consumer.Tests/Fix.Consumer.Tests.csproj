@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Fix.Consumer\Fix.Consumer.csproj" />
     <ProjectReference Include="..\..\src\Fix.Protocol\Fix.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\Fix.Producer\Fix.Producer.csproj" />
   </ItemGroup>
 
 </Project>

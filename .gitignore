@@ -480,3 +480,8 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Angular
+src/Fix.Consumer.Web/node_modules/
+src/Fix.Consumer.Web/dist/
+src/Fix.Consumer.Web/.angular/

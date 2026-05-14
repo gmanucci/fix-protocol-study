@@ -103,9 +103,10 @@ public sealed class TcpMarketConnection : IMarketConnection
                 var result = await reader.ReadAsync(ct).ConfigureAwait(false);
                 var buffer = result.Buffer;
 
-                while (TryReadOne(ref buffer, out var tick))
+                while (TryReadOne(ref buffer, out var tick, out var parsed))
                 {
-                    await _channel.Writer.WriteAsync(tick, ct).ConfigureAwait(false);
+                    if (parsed)
+                        await _channel.Writer.WriteAsync(tick, ct).ConfigureAwait(false);
                 }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);
@@ -118,24 +119,30 @@ public sealed class TcpMarketConnection : IMarketConnection
         }
     }
 
-    private static bool TryReadOne(ref ReadOnlySequence<byte> buffer, out MarketTick tick)
+    /// <summary>
+    /// Tries to extract one complete FIX message from <paramref name="buffer"/>. Returns
+    /// <c>true</c> when a complete message boundary was found and consumed (the buffer is
+    /// sliced past it). The <paramref name="parsed"/> flag indicates whether the message
+    /// successfully decoded into a <see cref="MarketTick"/>; malformed messages are skipped
+    /// rather than re-tried so the framer makes forward progress.
+    /// </summary>
+    private static bool TryReadOne(ref ReadOnlySequence<byte> buffer, out MarketTick tick, out bool parsed)
     {
         tick = default;
+        parsed = false;
         if (buffer.IsEmpty) return false;
 
-        // Find a complete message; copy into a contiguous span when needed.
         if (buffer.IsSingleSegment)
         {
             var span = buffer.First.Span;
             var len = FixInterpreter.TryFindMessageBoundary(span);
             if (len <= 0) return false;
-            var ok = FixInterpreter.TryParseIncrementalRefresh(span[..len], out tick);
+            parsed = FixInterpreter.TryParseIncrementalRefresh(span[..len], out tick);
             buffer = buffer.Slice(len);
-            return ok || true;
+            return true;
         }
         else
         {
-            // Try in a stack buffer up to 1KB; otherwise rent.
             var max = checked((int)Math.Min(buffer.Length, 4096));
             byte[] rented = ArrayPool<byte>.Shared.Rent(max);
             try
@@ -143,9 +150,9 @@ public sealed class TcpMarketConnection : IMarketConnection
                 buffer.Slice(0, max).CopyTo(rented);
                 var len = FixInterpreter.TryFindMessageBoundary(rented.AsSpan(0, max));
                 if (len <= 0) return false;
-                var ok = FixInterpreter.TryParseIncrementalRefresh(rented.AsSpan(0, len), out tick);
+                parsed = FixInterpreter.TryParseIncrementalRefresh(rented.AsSpan(0, len), out tick);
                 buffer = buffer.Slice(len);
-                return ok || true;
+                return true;
             }
             finally
             {

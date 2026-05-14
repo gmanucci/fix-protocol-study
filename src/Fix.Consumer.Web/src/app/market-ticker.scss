@@ -1,0 +1,27 @@
+.ticker {
+  font-family: system-ui, sans-serif;
+  padding: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+
+  h1 { margin-bottom: 0.25rem; }
+  .status { color: #555; font-size: 0.85rem; margin: 0 0 1rem; }
+
+  .controls {
+    display: flex;
+    gap: 1rem;
+    align-items: end;
+    margin-bottom: 1rem;
+    label { display: flex; flex-direction: column; font-size: 0.8rem; color: #444; }
+    select { padding: 0.25rem 0.5rem; }
+    button { padding: 0.4rem 0.9rem; }
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    th, td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .empty { text-align: center; color: #888; }
+  }
+}

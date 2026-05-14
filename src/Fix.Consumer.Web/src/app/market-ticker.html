@@ -1,0 +1,48 @@
+<div class="ticker">
+  <h1>FIX Market Ticker</h1>
+  <p class="status">Hub: {{ status() }}</p>
+
+  <form (submit)="subscribe(); $event.preventDefault()" class="controls">
+    <label>
+      Symbol
+      <select [(ngModel)]="symbol" name="symbol">
+        <option *ngFor="let s of availableSymbols" [value]="s">{{ s }}</option>
+      </select>
+    </label>
+    <label>
+      Transport
+      <select [(ngModel)]="transport" name="transport">
+        <option *ngFor="let t of transports" [value]="t">{{ t }}</option>
+      </select>
+    </label>
+    <button type="submit">Subscribe</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Transport</th>
+        <th>Last Price</th>
+        <th>Last Qty</th>
+        <th>Type</th>
+        <th>Updates</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let row of rows()">
+        <td>{{ row.symbol }}</td>
+        <td>{{ row.transport }}</td>
+        <td>{{ row.lastPrice | number: '1.5-5' }}</td>
+        <td>{{ row.lastQty | number: '1.0-2' }}</td>
+        <td>{{ row.lastEntry }}</td>
+        <td>{{ row.count }}</td>
+        <td><button (click)="unsubscribe(row)">Unsubscribe</button></td>
+      </tr>
+      <tr *ngIf="rows().length === 0">
+        <td colspan="7" class="empty">No subscriptions yet — choose a symbol/transport and click Subscribe.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

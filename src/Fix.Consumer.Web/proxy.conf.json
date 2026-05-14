@@ -1,0 +1,4 @@
+{
+  "/hub": { "target": "http://localhost:5000", "secure": false, "ws": true, "changeOrigin": true },
+  "/health": { "target": "http://localhost:5000", "secure": false, "changeOrigin": true }
+}

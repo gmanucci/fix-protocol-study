@@ -41,7 +41,7 @@ public class PublisherTests
     public async Task SubscriptionPump_forwards_events_until_channel_completes()
     {
         var conn = new FakeConnection("EURUSD");
-        var pub = new RecordingPublisher();
+        var pub = new RecordingPublisher(expected: 2);
         await using var pump = new SubscriptionPump(conn, pub, "sub-1", NullLogger.Instance, CancellationToken.None);
         await pump.StartAsync(new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh });
 
@@ -49,8 +49,8 @@ public class PublisherTests
         conn.Push(new FixEvent(FixEventKind.MarketDataIncrementalRefresh, "EURUSD", null, null, null, null, "TCP", null));
         conn.Complete();
 
-        // Wait briefly for the pump to drain.
-        for (int i = 0; i < 50 && pub.Published.Count < 2; i++) await Task.Delay(20);
+        // Wait deterministically for the pump to deliver both events (with a safety timeout).
+        await pub.ReachedExpected.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, pub.Published.Count);
     }
 
@@ -71,9 +71,22 @@ public class PublisherTests
 
     private sealed class RecordingPublisher : IEventPublisher
     {
+        private readonly int _expected;
         public readonly List<FixEvent> Published = new();
         public int Completed;
-        public Task PublishAsync(string id, FixEvent evt, CancellationToken ct) { Published.Add(evt); return Task.CompletedTask; }
+        public readonly SemaphoreSlim ReachedExpected = new(0, 1);
+
+        public RecordingPublisher(int expected = int.MaxValue) => _expected = expected;
+
+        public Task PublishAsync(string id, FixEvent evt, CancellationToken ct)
+        {
+            lock (Published)
+            {
+                Published.Add(evt);
+                if (Published.Count == _expected) ReachedExpected.Release();
+            }
+            return Task.CompletedTask;
+        }
         public Task CompleteAsync(string id, CancellationToken ct) { Completed++; return Task.CompletedTask; }
     }
 

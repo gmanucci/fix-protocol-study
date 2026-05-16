@@ -37,11 +37,13 @@ public class TcpMarketConnectionTests
             ChannelCapacity = 64,
         };
         await using var conn = new TcpMarketConnection("EURUSD", consumerOpts, NullLogger<TcpMarketConnection>.Instance);
-        await conn.StartAsync(cts.Token);
+        await conn.StartAsync(new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh }, cts.Token);
 
-        var tick = await conn.Ticks.ReadAsync(cts.Token);
-        Assert.Equal("EURUSD", tick.Symbol);
-        Assert.True(tick.Price > 0);
+        var evt = await conn.Events.ReadAsync(cts.Token);
+        Assert.Equal(FixEventKind.MarketDataIncrementalRefresh, evt.Kind);
+        Assert.Equal("EURUSD", evt.Symbol);
+        var md = Assert.IsType<MarketDataPayload>(evt.Payload);
+        Assert.True(md.Price > 0);
 
         cts.Cancel();
     }
@@ -85,11 +87,12 @@ public class UdpMarketConnectionTests
             ChannelCapacity = 64,
         };
         await using var conn = new UdpMarketConnection("AAPL", consumerOpts, NullLogger<UdpMarketConnection>.Instance);
-        await conn.StartAsync(cts.Token);
+        await conn.StartAsync(new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh }, cts.Token);
 
-        var tick = await conn.Ticks.ReadAsync(cts.Token);
-        Assert.Equal("AAPL", tick.Symbol);
-        Assert.True(tick.Price > 0);
+        var evt = await conn.Events.ReadAsync(cts.Token);
+        Assert.Equal("AAPL", evt.Symbol);
+        var md = Assert.IsType<MarketDataPayload>(evt.Payload);
+        Assert.True(md.Price > 0);
 
         cts.Cancel();
     }

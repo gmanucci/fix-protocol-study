@@ -1,11 +1,15 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Fix.Consumer/Fix.Consumer.csproj" />
+    <Project Path="src/Fix.Consumer.Abstractions/Fix.Consumer.Abstractions.csproj" />
+    <Project Path="src/Fix.Consumer.Grpc/Fix.Consumer.Grpc.csproj" />
+    <Project Path="src/Fix.Consumer.QuickFix/Fix.Consumer.QuickFix.csproj" />
     <Project Path="src/Fix.Producer/Fix.Producer.csproj" />
     <Project Path="src/Fix.Protocol/Fix.Protocol.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fix.Consumer.Tests/Fix.Consumer.Tests.csproj" />
+    <Project Path="tests/Fix.Consumer.QuickFix.Tests/Fix.Consumer.QuickFix.Tests.csproj" />
     <Project Path="tests/Fix.Producer.Tests/Fix.Producer.Tests.csproj" />
     <Project Path="tests/Fix.Protocol.Tests/Fix.Protocol.Tests.csproj" />
   </Folder>

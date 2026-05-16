@@ -8,10 +8,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.5" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.31" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Fix.Protocol\Fix.Protocol.csproj" />
+    <ProjectReference Include="..\Fix.Consumer.Abstractions\Fix.Consumer.Abstractions.csproj" />
+    <ProjectReference Include="..\Fix.Consumer.Grpc\Fix.Consumer.Grpc.csproj" />
+    <ProjectReference Include="..\Fix.Consumer.QuickFix\Fix.Consumer.QuickFix.csproj" />
   </ItemGroup>
 
 </Project>

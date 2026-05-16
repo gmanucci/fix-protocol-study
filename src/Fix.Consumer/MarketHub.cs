@@ -1,88 +1,84 @@
 using System.Collections.Concurrent;
+using Fix.Protocol;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace Fix.Consumer;
 
 /// <summary>
-/// Plain DTO sent over SignalR. Records are fine here — this is a cold-ish path that crosses
-/// the JSON serializer anyway, and the producer-side hot path keeps using <c>MarketTick</c>
-/// structs internally.
+/// Plain DTO sent over SignalR for backwards compatibility with the original Angular client
+/// — kept alongside the richer <see cref="FixEvent"/> envelope. Records are fine here — this
+/// is a cold-ish path that crosses the JSON serializer anyway, and the producer-side hot path
+/// keeps using <c>MarketTick</c> structs internally.
 /// </summary>
 public sealed record TickDto(string Symbol, double Price, double Quantity, long TimestampTicks, string EntryType, string Transport);
 
 /// <summary>
-/// SignalR hub. Clients call <c>Subscribe</c> / <c>Unsubscribe</c> and then receive ticks via the
-/// "tick" callback. One <see cref="IMarketConnection"/> is created per (caller, symbol, transport).
+/// SignalR hub. Clients call:
+/// <list type="bullet">
+///   <item><c>ListEventKinds</c> — to discover all FIX event types supported by the server.</item>
+///   <item><c>Subscribe(SubscriptionRequest)</c> — to start receiving the chosen event kinds.</item>
+///   <item><c>Unsubscribe(symbol, transport)</c> — to stop a specific subscription.</item>
+/// </list>
+/// The actual fan-out is handled by an <see cref="IEventPublisher"/> resolved from DI, so the
+/// hub is decoupled from the wire format. Today that is a <see cref="SignalREventPublisher"/>
+/// which sends an <c>"event"</c> message back to the calling SignalR connection (and a legacy
+/// <c>"tick"</c> message for market-data).
 /// </summary>
 public sealed class MarketHub : Hub
 {
-    // Per-connection map of (symbol+transport → market connection + pump task)
-    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, Subscription>> Subs = new();
+    // Per-connection map of (symbol+transport → pump)
+    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, SubscriptionPump>> Subs = new();
 
     private readonly MarketConnectionFactory _factory;
+    private readonly IEventPublisher _publisher;
     private readonly ILogger<MarketHub> _logger;
 
-    public MarketHub(MarketConnectionFactory factory, ILogger<MarketHub> logger)
+    public MarketHub(MarketConnectionFactory factory, IEventPublisher publisher, ILogger<MarketHub> logger)
     {
         _factory = factory;
+        _publisher = publisher;
         _logger = logger;
     }
 
-    public async Task Subscribe(string symbol, string transport)
+    /// <summary>Returns every <see cref="FixEventKind"/> name the server can emit.</summary>
+    public string[] ListEventKinds() =>
+        FixEventKinds.All.Select(k => k.ToString()).ToArray();
+
+    /// <summary>New, richer subscription entry point that accepts an explicit event-kind filter.</summary>
+    public async Task Subscribe(SubscriptionRequest request)
     {
-        if (string.IsNullOrWhiteSpace(symbol)) throw new HubException("symbol required");
-        if (!Enum.TryParse<Transport>(transport, ignoreCase: true, out var t))
-            throw new HubException($"unknown transport '{transport}'");
+        if (request is null) throw new HubException("request required");
+        if (string.IsNullOrWhiteSpace(request.Symbol)) throw new HubException("symbol required");
+        if (!Enum.TryParse<Transport>(request.Transport, ignoreCase: true, out var t))
+            throw new HubException($"unknown transport '{request.Transport}'");
 
-        var key = $"{symbol}|{t}";
-        var bag = Subs.GetOrAdd(Context.ConnectionId, _ => new ConcurrentDictionary<string, Subscription>());
-
+        var kinds = ParseKinds(request.EventKinds);
+        var key = $"{request.Symbol}|{t}";
+        var bag = Subs.GetOrAdd(Context.ConnectionId, _ => new ConcurrentDictionary<string, SubscriptionPump>());
         if (bag.ContainsKey(key)) return;
 
-        var conn = _factory.Create(symbol, t);
-        await conn.StartAsync(Context.ConnectionAborted).ConfigureAwait(false);
-
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(Context.ConnectionAborted);
-        var sub = new Subscription(conn, cts);
-        if (!bag.TryAdd(key, sub))
+        var conn = _factory.Create(request.Symbol, t);
+        var pump = new SubscriptionPump(conn, _publisher, Context.ConnectionId, _logger, Context.ConnectionAborted);
+        if (!bag.TryAdd(key, pump))
         {
-            await conn.DisposeAsync();
-            cts.Dispose();
+            await pump.DisposeAsync();
             return;
         }
-
-        var caller = Clients.Caller;
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await foreach (var tick in conn.Ticks.ReadAllAsync(cts.Token).ConfigureAwait(false))
-                {
-                    var dto = new TickDto(
-                        tick.Symbol,
-                        tick.Price,
-                        tick.Quantity,
-                        tick.TimestampTicks,
-                        EntryTypeToString(tick.EntryType),
-                        conn.Transport);
-                    await caller.SendAsync("tick", dto, cts.Token).ConfigureAwait(false);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Pump for {Symbol} ended", symbol);
-            }
-        }, cts.Token);
+        await pump.StartAsync(kinds).ConfigureAwait(false);
     }
+
+    /// <summary>Backwards-compatible overload used by the original client.</summary>
+    public Task Subscribe(string symbol, string transport) =>
+        Subscribe(new SubscriptionRequest(symbol, transport, null));
 
     public async Task Unsubscribe(string symbol, string transport)
     {
         if (!Enum.TryParse<Transport>(transport, ignoreCase: true, out var t)) return;
         var key = $"{symbol}|{t}";
-        if (Subs.TryGetValue(Context.ConnectionId, out var bag) && bag.TryRemove(key, out var sub))
+        if (Subs.TryGetValue(Context.ConnectionId, out var bag) && bag.TryRemove(key, out var pump))
         {
-            await sub.DisposeAsync();
+            await pump.DisposeAsync();
         }
     }
 
@@ -90,36 +86,26 @@ public sealed class MarketHub : Hub
     {
         if (Subs.TryRemove(Context.ConnectionId, out var bag))
         {
-            foreach (var sub in bag.Values)
+            foreach (var pump in bag.Values)
             {
-                await sub.DisposeAsync();
+                await pump.DisposeAsync();
             }
         }
         await base.OnDisconnectedAsync(exception);
     }
 
-    private static string EntryTypeToString(byte b) => b switch
+    private static IReadOnlySet<FixEventKind> ParseKinds(string[]? names)
     {
-        Fix.Protocol.MdEntryType.Bid => "Bid",
-        Fix.Protocol.MdEntryType.Offer => "Offer",
-        Fix.Protocol.MdEntryType.Trade => "Trade",
-        _ => "Unknown",
-    };
-
-    private sealed class Subscription : IAsyncDisposable
-    {
-        private readonly IMarketConnection _conn;
-        private readonly CancellationTokenSource _cts;
-        public Subscription(IMarketConnection conn, CancellationTokenSource cts)
+        if (names is null || names.Length == 0)
+            return new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh };
+        var set = new HashSet<FixEventKind>(names.Length);
+        foreach (var n in names)
         {
-            _conn = conn;
-            _cts = cts;
+            if (string.IsNullOrWhiteSpace(n)) continue;
+            if (Enum.TryParse<FixEventKind>(n, ignoreCase: true, out var k) && k != FixEventKind.Unknown)
+                set.Add(k);
         }
-        public async ValueTask DisposeAsync()
-        {
-            try { _cts.Cancel(); } catch { }
-            await _conn.DisposeAsync();
-            _cts.Dispose();
-        }
+        if (set.Count == 0) set.Add(FixEventKind.MarketDataIncrementalRefresh);
+        return set;
     }
 }

@@ -15,7 +15,8 @@ public sealed class UdpMarketConnection : IMarketConnection
 {
     private readonly ConsumerOptions _options;
     private readonly ILogger<UdpMarketConnection> _logger;
-    private readonly Channel<MarketTick> _channel;
+    private readonly Channel<FixEvent> _channel;
+    private IReadOnlySet<FixEventKind> _kinds = new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh };
     private Socket? _socket;
     private CancellationTokenSource? _cts;
     private Task? _runner;
@@ -25,7 +26,7 @@ public sealed class UdpMarketConnection : IMarketConnection
         Symbol = symbol;
         _options = options;
         _logger = logger;
-        _channel = Channel.CreateBounded<MarketTick>(new BoundedChannelOptions(_options.ChannelCapacity)
+        _channel = Channel.CreateBounded<FixEvent>(new BoundedChannelOptions(_options.ChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
@@ -36,10 +37,12 @@ public sealed class UdpMarketConnection : IMarketConnection
 
     public string Symbol { get; }
     public string Transport => "UDP";
-    public ChannelReader<MarketTick> Ticks => _channel.Reader;
+    public ChannelReader<FixEvent> Events => _channel.Reader;
 
-    public async Task StartAsync(CancellationToken ct)
+    public async Task StartAsync(IReadOnlySet<FixEventKind> subscribedKinds, CancellationToken ct)
     {
+        if (subscribedKinds.Count > 0)
+            _kinds = subscribedKinds;
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         _socket.Bind(new IPEndPoint(IPAddress.Any, 0));
         var producerEp = new IPEndPoint(IPAddress.Parse(_options.ProducerHost), _options.ProducerUdpPort);
@@ -91,9 +94,10 @@ public sealed class UdpMarketConnection : IMarketConnection
                 catch (OperationCanceledException) { break; }
                 catch (SocketException) { continue; }
 
-                if (FixInterpreter.TryParseIncrementalRefresh(buffer.AsSpan(0, result.ReceivedBytes), out var tick))
+                if (FixInterpreter.TryParseIncrementalRefresh(buffer.AsSpan(0, result.ReceivedBytes), out var tick)
+                    && _kinds.Contains(FixEventKind.MarketDataIncrementalRefresh))
                 {
-                    await _channel.Writer.WriteAsync(tick, ct).ConfigureAwait(false);
+                    await _channel.Writer.WriteAsync(MarketTickEvents.ToIncrementalRefresh(tick, Transport), ct).ConfigureAwait(false);
                 }
             }
         }

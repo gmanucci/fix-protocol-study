@@ -18,7 +18,8 @@ public sealed class TcpMarketConnection : IMarketConnection
 {
     private readonly ConsumerOptions _options;
     private readonly ILogger<TcpMarketConnection> _logger;
-    private readonly Channel<MarketTick> _channel;
+    private readonly Channel<FixEvent> _channel;
+    private IReadOnlySet<FixEventKind> _kinds = new HashSet<FixEventKind> { FixEventKind.MarketDataIncrementalRefresh };
     private Socket? _socket;
     private CancellationTokenSource? _cts;
     private Task? _runner;
@@ -28,7 +29,7 @@ public sealed class TcpMarketConnection : IMarketConnection
         Symbol = symbol;
         _options = options;
         _logger = logger;
-        _channel = Channel.CreateBounded<MarketTick>(new BoundedChannelOptions(_options.ChannelCapacity)
+        _channel = Channel.CreateBounded<FixEvent>(new BoundedChannelOptions(_options.ChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
@@ -39,10 +40,12 @@ public sealed class TcpMarketConnection : IMarketConnection
 
     public string Symbol { get; }
     public string Transport => "TCP";
-    public ChannelReader<MarketTick> Ticks => _channel.Reader;
+    public ChannelReader<FixEvent> Events => _channel.Reader;
 
-    public async Task StartAsync(CancellationToken ct)
+    public async Task StartAsync(IReadOnlySet<FixEventKind> subscribedKinds, CancellationToken ct)
     {
+        if (subscribedKinds.Count > 0)
+            _kinds = subscribedKinds;
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         await _socket.ConnectAsync(_options.ProducerHost, _options.ProducerTcpPort, ct).ConfigureAwait(false);
         await _socket.SendAsync(Encoding.ASCII.GetBytes($"SUB {Symbol}\n"), SocketFlags.None, ct).ConfigureAwait(false);
@@ -105,8 +108,8 @@ public sealed class TcpMarketConnection : IMarketConnection
 
                 while (TryReadOne(ref buffer, out var tick, out var parsed))
                 {
-                    if (parsed)
-                        await _channel.Writer.WriteAsync(tick, ct).ConfigureAwait(false);
+                    if (parsed && _kinds.Contains(FixEventKind.MarketDataIncrementalRefresh))
+                        await _channel.Writer.WriteAsync(MarketTickEvents.ToIncrementalRefresh(tick, Transport), ct).ConfigureAwait(false);
                 }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);

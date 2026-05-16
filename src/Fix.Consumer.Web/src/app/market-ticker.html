@@ -15,9 +15,17 @@
         <option *ngFor="let t of transports" [value]="t">{{ t }}</option>
       </select>
     </label>
+    <fieldset class="kinds">
+      <legend>Event kinds</legend>
+      <label *ngFor="let k of availableKinds()">
+        <input type="checkbox" [(ngModel)]="selectedKinds[k]" [name]="'k_' + k" />
+        {{ k }}
+      </label>
+    </fieldset>
     <button type="submit">Subscribe</button>
   </form>
 
+  <h2>Market data</h2>
   <table>
     <thead>
       <tr>
@@ -42,6 +50,31 @@
       </tr>
       <tr *ngIf="rows().length === 0">
         <td colspan="7" class="empty">No subscriptions yet — choose a symbol/transport and click Subscribe.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Session log</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Kind</th>
+        <th>Symbol</th>
+        <th>Source</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let row of sessionLog()">
+        <td>{{ row.ts | date: 'HH:mm:ss.SSS' }}</td>
+        <td>{{ row.kind }}</td>
+        <td>{{ row.symbol }}</td>
+        <td>{{ row.source }}</td>
+        <td><code>{{ row.detail }}</code></td>
+      </tr>
+      <tr *ngIf="sessionLog().length === 0">
+        <td colspan="5" class="empty">No session events yet — pick a session/admin event kind above and subscribe.</td>
       </tr>
     </tbody>
   </table>

@@ -1,0 +1,21 @@
+# Sample QuickFIX/n initiator config used by the Fix.Consumer.QuickFix wrapper.
+# All values can be overridden via Consumer:QuickFix:* in appsettings.json.
+
+[DEFAULT]
+ConnectionType=initiator
+ReconnectInterval=5
+FileStorePath=store
+FileLogPath=log
+StartTime=00:00:00
+EndTime=00:00:00
+UseDataDictionary=Y
+DataDictionary=FIX44.xml
+SocketNodelay=Y
+
+[SESSION]
+BeginString=FIX.4.4
+SenderCompID=FIX_CONSUMER
+TargetCompID=FIX_PRODUCER
+HeartBtInt=30
+SocketConnectHost=127.0.0.1
+SocketConnectPort=5012

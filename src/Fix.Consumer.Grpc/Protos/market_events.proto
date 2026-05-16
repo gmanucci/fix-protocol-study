@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+option csharp_namespace = "Fix.Consumer.Grpc";
+
+package fix.consumer;
+
+service MarketEvents {
+  // Server-streaming subscription. The client asks for a (symbol, transport, kinds) tuple
+  // and the server streams matching FIX events until the client cancels.
+  rpc Stream (StreamRequest) returns (stream FixEventDto);
+}
+
+message StreamRequest {
+  string subscriber_id = 1;     // free-form correlation id chosen by the caller
+  string symbol = 2;
+  string transport = 3;         // "Tcp" | "Udp" | "QuickFix"
+  repeated string event_kinds = 4;
+}
+
+message FixEventDto {
+  string kind = 1;              // FixEventKind name
+  string symbol = 2;
+  string sender_comp_id = 3;
+  string target_comp_id = 4;
+  int64 msg_seq_num = 5;
+  int64 sending_time_ticks = 6;
+  string source = 7;            // "TCP" | "UDP" | "QuickFIX"
+  // Market-data payload (populated only for X / W).
+  double price = 8;
+  double quantity = 9;
+  string entry_type = 10;
+}

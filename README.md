@@ -8,15 +8,19 @@ consumers, which then re-publish to a browser through SignalR.
 
 ```
 src/
-  Fix.Protocol/        # shared FIX 4.4 subset encoder/decoder, MarketTick struct
-  Fix.Producer/        # worker host: singleton market generator + TCP & UDP transports
-  Fix.Consumer/        # ASP.NET Core host: TCP/UDP client connections + SignalR hub
-  Fix.Consumer.Web/    # Angular 20 SPA that subscribes via SignalR
+  Fix.Protocol/                # shared FIX 4.4 subset encoder/decoder, MarketTick struct, FixEvent envelope
+  Fix.Producer/                # worker host: singleton market generator + TCP & UDP transports
+  Fix.Consumer.Abstractions/   # consumer-side contracts (IMarketConnection, IEventPublisher, options)
+  Fix.Consumer/                # ASP.NET Core host: SignalR hub + pluggable publishers (SignalR/gRPC/Redis)
+  Fix.Consumer.QuickFix/       # QuickFIX/n-backed IMarketConnection (third transport)
+  Fix.Consumer.Grpc/           # .proto + generated server-streaming gRPC code
+  Fix.Consumer.Web/            # Angular 20 SPA that subscribes via SignalR
 tests/
   Fix.Protocol.Tests/
   Fix.Producer.Tests/
   Fix.Consumer.Tests/
-Fix.sln
+  Fix.Consumer.QuickFix.Tests/
+Fix.slnx
 ```
 
 ## Requirements
@@ -28,7 +32,7 @@ Fix.sln
 
 ```bash
 dotnet build
-dotnet test            # 12 tests across the three test projects
+dotnet test            # 30 tests across the four test projects
 cd src/Fix.Consumer.Web && npm install && npm run build
 ```
 
@@ -47,6 +51,11 @@ ASPNETCORE_URLS=http://localhost:5000 dotnet run --project src/Fix.Consumer
 cd src/Fix.Consumer.Web && npm start
 # open http://localhost:4200
 ```
+
+The UI exposes a checkbox group of every `FixEventKind` returned by the hub's
+`ListEventKinds()` method — pick the message types you want delivered alongside (or
+instead of) market-data refreshes. Session/admin events land in a separate "Session log"
+table; market-data ticks stay in the original price grid.
 
 ## Configuration
 
@@ -70,11 +79,58 @@ cd src/Fix.Consumer.Web && npm start
   "ProducerTcpPort": 5010,
   "ProducerUdpPort": 5011,
   "ChannelCapacity": 1024,
-  "CorsOrigins": ["http://localhost:4200"]
+  "CorsOrigins": ["http://localhost:4200"],
+  "Publishers": ["SignalR"],
+  "QuickFix": {
+    "SenderCompId": "FIX_CONSUMER",
+    "TargetCompId": "FIX_PRODUCER",
+    "SocketConnectHost": "127.0.0.1",
+    "SocketConnectPort": 5012,
+    "HeartBtInt": 30
+  },
+  "Redis": {
+    "Configuration": "localhost:6379",
+    "ChannelPrefix": "fix.events"
+  }
 }
 ```
 
+### Three transports for the consumer
+
+| Transport  | Implementation                       | Use case                                                     |
+|------------|--------------------------------------|--------------------------------------------------------------|
+| `Tcp`      | `TcpMarketConnection` (Pipelines)    | Original raw-bytes path; lowest overhead.                    |
+| `Udp`      | `UdpMarketConnection` (`Socket.ReceiveAsync`) | Datagram path; original study transport.            |
+| `QuickFix` | `QuickFixMarketConnection` (QuickFIX/n) | Real FIX 4.4 session via `SocketInitiator` + `IApplication`. |
+
+Pick the transport per subscription from the UI dropdown, or supply
+`SubscriptionRequest.Transport` programmatically. The QuickFIX initiator uses an in-memory
+config built from `Consumer:QuickFix:*`, or a real `quickfix.cfg` if you point
+`ConfigPath` at one (see `src/Fix.Consumer.QuickFix/quickfix.cfg.template`).
+
+### Pluggable outbound publishers
+
+`Consumer:Publishers` is a list — combine any of:
+
+- `SignalR` (default) — pushes events to the SignalR connection that subscribed.
+- `Grpc` — server-streaming `MarketEvents.Stream` RPC defined in
+  `src/Fix.Consumer.Grpc/Protos/market_events.proto`. Connect with the same
+  `subscriberId` (the SignalR connection id) to receive events over gRPC.
+- `Redis` — JSON-encoded `FixEvent` published on `{Prefix}.{subscriberId}` via
+  `StackExchange.Redis`. Useful for fan-out to other processes.
+
+Multiple publishers run side-by-side via `CompositeEventPublisher`, which fans out best-effort
+(failures of one publisher don't block the others).
+
 ## Design notes
+
+### FIX event model
+
+The consumer surfaces a discriminated `FixEvent` envelope (in `Fix.Protocol`) that covers
+session events (Logon/Logout/Heartbeat/TestRequest/ResendRequest/SequenceReset/Reject) and
+application events (MarketDataSnapshot/IncrementalRefresh/MarketDataRequestReject/News/
+BusinessMessageReject). Connections filter by `FixEventKind` before writing to their
+channel; subscribers only ever see kinds they asked for.
 
 ### Struct vs record for `MarketTick`
 

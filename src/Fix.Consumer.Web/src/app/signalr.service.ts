@@ -1,16 +1,18 @@
 import { Injectable, signal } from '@angular/core';
 import * as signalR from '@microsoft/signalr';
 import { Subject } from 'rxjs';
-import { MarketTick, Transport } from './market.models';
+import { FixEvent, MarketTick, SubscriptionRequest, Transport } from './market.models';
 
 /**
- * Wraps the SignalR `HubConnectionBuilder`. Exposes a `tick$` stream and a connection
- * status signal so components can react to lifecycle changes.
+ * Wraps the SignalR `HubConnectionBuilder`. Exposes streams for both the legacy
+ * `tick` channel (market-data ticks) and the new generic `event` channel
+ * (any subscribed FIX event kind: session, market-data, reject, ...).
  */
 @Injectable({ providedIn: 'root' })
 export class SignalrService {
   private hub?: signalR.HubConnection;
   readonly tick$ = new Subject<MarketTick>();
+  readonly event$ = new Subject<FixEvent>();
   readonly connected = signal(false);
 
   /** Lazily creates the hub connection on first use. */
@@ -26,6 +28,7 @@ export class SignalrService {
         .build();
 
       this.hub.on('tick', (t: MarketTick) => this.tick$.next(t));
+      this.hub.on('event', (e: FixEvent) => this.event$.next(e));
       this.hub.onreconnected(() => this.connected.set(true));
       this.hub.onclose(() => this.connected.set(false));
     }
@@ -35,9 +38,15 @@ export class SignalrService {
     }
   }
 
-  async subscribe(symbol: string, transport: Transport): Promise<void> {
+  /** Returns every FixEventKind name the server can emit. */
+  async listEventKinds(): Promise<string[]> {
     await this.ensureConnected();
-    await this.hub!.invoke('Subscribe', symbol, transport);
+    return this.hub!.invoke<string[]>('ListEventKinds');
+  }
+
+  async subscribe(req: SubscriptionRequest): Promise<void> {
+    await this.ensureConnected();
+    await this.hub!.invoke('Subscribe', req);
   }
 
   async unsubscribe(symbol: string, transport: Transport): Promise<void> {
